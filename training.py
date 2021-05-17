@@ -1,0 +1,333 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Sep 17 12:54:57 2020
+
+@author: Adrian
+"""
+
+import numpy as np
+import tensorflow as tf
+
+config = tf.compat.v1.ConfigProto()
+config.gpu_options.allow_growth = True
+session = tf.compat.v1.InteractiveSession(config=config)
+
+from tensorflow.keras import Model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.layers import Input, concatenate, Conv1D, MaxPooling1D, UpSampling1D, BatchNormalization, Dropout
+
+def conv_block(i, nf, f, ks = 3, bn = False, do = 0):
+    c = Conv1D(filters = nf*f, kernel_size = ks, kernel_initializer = 'he_normal', padding = 'same', activation = 'relu')(i)
+    c = BatchNormalization()(c) if bn else c
+    c = Conv1D(filters = nf*f, kernel_size = ks, kernel_initializer = 'he_normal', padding = 'same', activation = 'relu')(c)
+    c = BatchNormalization()(c) if bn else c
+    m = MaxPooling1D(2)(c)
+    return [Dropout(do)(m),c] if do else [m,c]
+
+def deconv_block(i, c2, nf, f, ks = 3, bn = False, do = 0):
+    c1 = UpSampling1D(size=2)(i)
+    c1 = Conv1D(filters = nf*f, kernel_size=2, padding = 'same')(c1)
+    c = BatchNormalization()(c1) if bn else c1
+    c = concatenate([c1, c2])
+    c = Conv1D(filters = nf*f, kernel_size = ks, kernel_initializer = 'he_normal', padding = 'same', activation = 'relu')(c)
+    c = BatchNormalization()(c) if bn else c
+    c = Conv1D(filters = nf*f, kernel_size = ks, kernel_initializer = 'he_normal', padding = 'same', activation = 'relu')(c)
+    c = BatchNormalization()(c) if bn else c
+    return Dropout(do)(c) if do else c
+
+def unet1d(depth=3, size=(None,1), nc=1, nf=64, ks=3, bn=False, do=0, LR = 1e-4):
+    """
+    Implementation of the UNet CNN model for semantic segmentation as 
+    specified by Ronneberger et al. 2015 [1]. This version is intended for
+    1-dimensional data. An additional hyperparameter
+    has been added to procedurally control the number of convolution
+    blocks in the contracting path and deconvolution blocks in the
+    expanding path. The number of layers and the number of weights
+    increases with depth. As implemented here, UpSampling1D + Conv1D
+    is used for upsampling in the expanding path instead of actual deconvolution [2].
+    
+    
+    Parameters
+    ----------
+        depth : int
+            controls number of conv/deconv-blocks
+        size : (int, int, int)
+            dimensions of input data
+        nc : int
+            number of output channels (eg. 2 => binary)
+        nf : int
+            number of filters
+        ks : int
+            kernel size of convolution filters
+        do : float
+            dropout (0..1)
+        bn : bool
+            batch normalization
+        LR : float
+            learning rate
+        
+    
+    Returns
+    -------
+        model : keras/tensorflow cnn model
+            untrained model
+    
+    
+    References
+    ----------
+        [1] : https://link.springer.com/chapter/10.1007/978-3-319-24574-4_28
+        [2] : https://distill.pub/2016/deconv-checkerboard/
+        
+    """
+
+    i = Input(size)
+        
+    ### contracting path
+    
+    c = {}
+    
+    for d in range(0,depth):
+        
+        c[d] = conv_block(i if d==0 else c[d-1][0],nf,2**d,ks,bn,do)
+        
+    ### bottleneck
+    b = c[depth-1][0]
+    b = Conv1D(filters = nf*2**depth, kernel_size = ks, kernel_initializer = 'he_normal', padding = 'same', activation = 'relu')(c[depth-1][0])
+    b = BatchNormalization()(b) if bn else b
+    b = Conv1D(filters = nf*2**depth, kernel_size = ks, kernel_initializer = 'he_normal', padding = 'same', activation = 'relu', name='bottleneck')(b)
+    b = BatchNormalization()(b) if bn else b
+        
+    ### expanding path
+
+    e = {}
+
+    for d in reversed(range(0,depth)):
+
+        e[d] = deconv_block(b if d==depth-1 else e[d+1],c[d][1],nf,2**d,ks,bn,do)
+        
+    ### output
+    
+    o = Conv1D(filters = nc, kernel_size = 1, activation='softmax')(e[0])
+        
+    model = Model(inputs = i, outputs = o)
+    
+    model.compile(optimizer = Adam(lr = LR), loss = 'binary_crossentropy', metrics = ['accuracy'])
+        
+    # model.summary()
+    
+    return model
+
+
+def gen_training_data(N, m0, dm, s0, ds, R, O):
+    """
+    Function for generating synthetic training data. The function generates 1D
+    time series of an angle changing with time, i.e. a rotation. It is assumed
+    that configurations shifted by pi cannot be distinguished, therefore the 
+    (wrapped) angle is bounded between 0..pi.
+    At the basis, the angle is linearly dependent on time. However, after rotating
+    in one direction for a certain interval, the rotation may change direction.
+    Rotation speed (slope) and average intervall length can be affected
+    by additive noise via parameters.
+    Further, the time series can be affected by additive noise or by random noise,
+    the latter meaning that single data points are assigned a random angle rather
+    than one generated by the model.
+    Output data is labeled in the categories: (counter-)clockwise and random.
+    
+    Parameters
+    ----------
+    N : int
+        time series length
+    m0 : float
+        rotation speed / slope
+    dm : float
+        slope noise
+    s0 : float
+        intervall length
+    ds : float
+        intervall length noise
+    R : float
+        additive noise (noise amplitude is pi*R, mean is zero)
+    O : float 0..1
+        percentage of angles assigned randomly
+
+    Returns
+    -------
+    time : numpy array
+        time points
+    angle : numpy array
+        angle for each time point
+    label : numpy array / categorical
+        category of each time point
+
+    """
+
+    def new_segment(x0, y0, m, dy):
+        """
+        Function to generate one linear segment.
+
+        Parameters
+        ----------
+        x0 : float
+            starting point x coordinate
+        y0 : float
+            starting point y coordinate
+        m : float
+            slope
+        dy : float
+            intervall length (specified in angular units, not time -- i.e. 
+                              degrees rotated)
+
+        Returns
+        -------
+        x : numpy array
+            x coordinates (time)
+        y : numpy array
+            y coordinates (angle, 0..pi)
+
+        """
+        
+        x = np.arange(x0, x0+dy/abs(m))
+        y = m*(x-x0) + y0
+        
+        return list(x), list(y)
+    
+    y, x, r = [0], [0], [0]
+
+    while len(x) < N:
+
+        m = m0*np.random.choice([-1, 1]) + dm*m0*np.random.normal(0, 0.5)
+        s = s0 + ds*s0*np.random.normal(0, 0.5)
+        
+        xi, yi = new_segment(x[-1], y[-1], m, s)
+
+        x.extend(xi)
+        y.extend(yi)
+        
+        ri = np.ones(len(xi)) if m > 0 else -1*np.ones(len(xi))
+        
+        r.extend(ri)
+    
+    r[0] = r[1]
+    
+    # additive noise
+    y = np.asarray(y) + 2*np.pi*R*np.random.normal(0, 0.5, size=len(y))
+
+    
+    y = (y + np.pi) % (np.pi)
+    
+    # random outliers
+    o = np.random.rand(len(y)) < O
+    
+    for i, oi in enumerate(o):
+        if oi:
+            y[i] = np.pi*np.random.rand()
+            r[i] = 0
+    
+    return np.asarray(x)[:N], y[:N], np.asarray(r)[:N]
+    
+
+def data_gen(training_data_params, batch_size):
+    """
+    Data generator for use with 'unet1d'. Generates and returns rotation data
+    created by 'gen_training_data'.
+
+    Parameters
+    ----------
+    training_data_params : dict
+        parameters for data synthesis as specified by 'gen_training_data'
+    batch_size : int
+        batch size for training
+
+    Yields
+    ------
+    batch : tuple
+        data and labels for training
+
+    """
+    
+    while True:
+    
+        Y, R = [], []
+
+        while len(Y) < batch_size:    
+    
+            x, y, r = gen_training_data(**training_data_params)     
+                        
+            y = (y-y.mean())/(y.max()-y.min())
+            
+            y = np.reshape(y,y.shape+(1,))
+            r = np.reshape(r,r.shape+(1,))
+            
+            r = tf.keras.utils.to_categorical(r, num_classes=3)
+            
+            Y.append(y)
+            R.append(r)
+        
+        yield (np.float16(np.asarray(Y)), np.float16(np.asarray(R)))
+        
+def train(training_data_params, batch_size, epochs, steps_per_epoch):
+    """
+    Function for training. Validation accuracy is limited, as random noise
+    can generated samples that are indistinguishable form those generated
+    by the rotation model & additive noise.
+
+    Parameters
+    ----------
+    training_data_params : dict
+        parameters for data synthesis as specified by 'gen_training_data'
+    batch_size : int
+        batch size for training
+    epochs : int
+        number of epochs
+    steps_per_epoch : int
+        n of data batches synthesized each epoch
+
+    Returns
+    -------
+    model : keras/tensorflow model
+        trained unet
+
+    """
+    
+    model = unet1d(depth=4, size=(size,1), nc=3, nf=64, ks=3, do=0.5, bn=True, LR = 1e-4)
+    
+    train_gen = data_gen(training_data_params, batch_size)
+    val_gen = data_gen(training_data_params, batch_size)
+    
+    model.fit(train_gen, steps_per_epoch=steps_per_epoch, epochs=epochs, verbose = 1, validation_data=val_gen, validation_steps=int(steps_per_epoch/10))
+    
+    return model
+
+if __name__ == '__main__':
+        
+    import matplotlib.pyplot as plt
+    from tensorflow.keras.models import load_model
+    
+    size = 4096
+    batch_size = 4
+    epochs = 50
+    steps_per_epoch = 100
+
+    N = size
+    m0 = 2*np.pi/3600*12
+    dm = 0.75
+    s0 = np.pi/2
+    ds = 0.65
+    R = 0.1
+    O = 0.33
+    
+    training_data_params = {'N':N, 'm0':m0, 'dm':dm, 's0':s0, 'ds':ds, 'R':R, 'O':O}
+
+    # model = train(training_data_params, size, batch_size, epochs, steps_per_epoch)
+    # model.save(os.path.join('C:/Users/Adrian/Desktop/DL_denoise_model_'+str(size)+'.h5'))
+    # model = load_model('C:/Users/Adrian/Desktop/DL_denoise_model_2048.h5')    
+
+    X, Y, L = gen_training_data(**training_data_params)
+    plt.figure(figsize=plt.figaspect(1/(2*1.618)))
+    plt.scatter(X, Y, c=L, s=2)
+    plt.xlabel('time (s)', fontsize=16)
+    plt.ylabel('angle (rad)', fontsize=16)
+    plt.xticks(fontsize=14)
+    plt.yticks(fontsize=14)
+    plt.tight_layout()
+
