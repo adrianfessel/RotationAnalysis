@@ -304,24 +304,24 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     from tensorflow.keras.models import load_model
     
-    size = 2048
+    size = 4096
     batch_size = 4
     epochs = 50
-    steps_per_epoch = 100
+    steps_per_epoch = 200
 
     N = size
     m0 = 2*np.pi/3600*12
-    dm = 0.5
+    dm = 0.75
     s0 = np.pi/2
     ds = 0.75
-    R = 0.05
+    R = 0.1
     O = 0.2
     
     training_data_params = {'N':N, 'm0':m0, 'dm':dm, 's0':s0, 'ds':ds, 'R':R, 'O':O}
 
-    # model = train(training_data_params, batch_size, epochs, steps_per_epoch)
-    # model.save(os.path.join('C:/Users/Adrian/Desktop/DL_denoise_model_'+str(size)+'.h5'))
-    # model = load_model('C:/Users/Adrian/Desktop/DL_denoise_model_2048.h5')    
+    model = train(training_data_params, batch_size, epochs, steps_per_epoch)
+    # model.save(os.path.join('./DL_denoise_model_'+str(size)+'.h5'))
+    # model = load_model('./DL_denoise_model_4096.h5')    
 
     X, Y, L = gen_training_data(**training_data_params)
     plt.figure(figsize=plt.figaspect(1/(2*1.618)))

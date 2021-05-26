@@ -530,9 +530,41 @@ if __name__ == '__main__':
     
     radon = get_radon(Path)
     a, b, theta0, R2 = radon_fit_ellipses(radon)
-    modes, fourier = get_radon_modes(radon)
+    modes, fourier, frequencies = get_radon_modes(radon)
     cluster = radon_cluster_modes(modes, fourier, 4)
     pos = embed_radon(modes, fourier, 2)
     ratio, cluster = sort_clusters_by_ratio(a, b, cluster)
     
     
+    X, Y = np.arange(len(theta0)), theta0
+    
+    model = load_model('./DL_denoise_model_4096.h5')
+    
+    L = evaluate_window(model, Y, 4096)
+    sections = find_sections(X, Y, L)
+    
+    plt.figure(figsize=plt.figaspect(.75/(2*1.618)))
+    plt.scatter(X[L==0], Y[L==0], s=1, c='gray', alpha = 0.5)
+    plt.scatter(X[L==1], Y[L==1], s=1, c='r')
+    plt.scatter(X[L==2], Y[L==2], s=1, c='b')
+    plt.xlabel('time (s)', fontsize=16)
+    plt.ylabel('angle (rad)', fontsize=16)
+    plt.title('synthetic data (labels recovered)', fontsize=16)
+    plt.xticks(fontsize=14)
+    plt.yticks(fontsize=14)
+    plt.tight_layout()
+    
+    plt.figure(figsize=plt.figaspect(.75/(2*1.618)))
+    plt.scatter(X[L==0], Y[L==0], s=1, c='gray', alpha = 0.5)
+    plt.scatter(X[L==1], Y[L==1], s=1, c='r')
+    plt.scatter(X[L==2], Y[L==2], s=1, c='b')
+    
+    for i, section in sections.items():
+        plt.plot(section['xf'], section['yf'], 'k--')
+    
+    plt.xlabel('time (s)', fontsize=16)
+    plt.ylabel('angle (rad)', fontsize=16)
+    plt.title('synthetic data (with fits)', fontsize=16)
+    plt.xticks(fontsize=14)
+    plt.yticks(fontsize=14)
+    plt.tight_layout()
