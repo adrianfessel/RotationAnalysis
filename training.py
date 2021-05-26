@@ -300,25 +300,26 @@ def train(training_data_params, batch_size, epochs, steps_per_epoch):
 
 if __name__ == '__main__':
         
+    import os
     import matplotlib.pyplot as plt
     from tensorflow.keras.models import load_model
     
-    size = 4096
+    size = 2048
     batch_size = 4
     epochs = 50
     steps_per_epoch = 100
 
     N = size
     m0 = 2*np.pi/3600*12
-    dm = 0.75
+    dm = 0.5
     s0 = np.pi/2
-    ds = 0.65
-    R = 0.1
-    O = 0.33
+    ds = 0.75
+    R = 0.05
+    O = 0.2
     
     training_data_params = {'N':N, 'm0':m0, 'dm':dm, 's0':s0, 'ds':ds, 'R':R, 'O':O}
 
-    # model = train(training_data_params, size, batch_size, epochs, steps_per_epoch)
+    # model = train(training_data_params, batch_size, epochs, steps_per_epoch)
     # model.save(os.path.join('C:/Users/Adrian/Desktop/DL_denoise_model_'+str(size)+'.h5'))
     # model = load_model('C:/Users/Adrian/Desktop/DL_denoise_model_2048.h5')    
 

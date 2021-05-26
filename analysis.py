@@ -6,12 +6,19 @@ Created on Thu Sep 17 13:48:43 2020
 """
 
 import os
+import pickle
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
+import scipy.optimize as optimize
 
 from tqdm import tqdm
 
 from skimage.filters import threshold_otsu
+from sklearn.pipeline import make_pipeline
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import RANSACRegressor
 from sklearn.metrics import r2_score
 
@@ -160,3 +167,372 @@ def find_sections(X, Y, L):
         Sections[i]['m'] = float(RANSAC.estimator_.coef_)      
 
     return Sections
+
+
+def get_radon(path):
+    """
+    Function to read radon variance datasets from a directory. Data are expected to be
+    stored as one dataset per .pkl file, given as variance of the radon transform
+    vs. angle: V(r).
+
+    Parameters
+    ----------
+    path : string
+        system path to directory containing radon data
+
+    Returns
+    -------
+    radon : dict
+        dict of radon data, keyed by file name
+
+    """
+        
+    frames = [frame for frame in os.listdir(path) if '.pkl' in frame]
+    frames = sorted(frames)
+    
+    radon = {}
+    
+    for frame in tqdm(frames):
+    
+        radon[frame] = pickle.load(open(os.path.join(path,frame),'rb'))
+
+    return radon
+
+
+def nextpow2(x):
+    return 1<<(x-1).bit_length()
+
+
+def get_modes(x, y, nM, nF):
+    """
+    Function to obtain cosine modes from a single data set (x, y) via Fourier
+    transformation.
+
+    Mode numbers are F[inds], mode powers are T[inds].
+
+    Parameters
+    ----------
+    x : numpy array
+        data x coordinates --UNUSED--
+    y : numpy array
+        data y coordinates
+    nM : int
+        number of modes
+    nF : int
+        controls zero-padding (smoothes out the fft)
+
+    Returns
+    -------
+    F : numpy array
+        spectrum frequencies
+    T : numpy array
+        fourier spectrum
+    inds : numpy array
+        mode indices
+
+    """
+    
+    inds = (4*np.arange(1,nM+1))*nF
+
+    dn = nextpow2(nF*len(y))-len(y)
+    ln = np.floor(dn/2)
+    rn = np.ceil(dn/2)
+    
+    yp = np.pad(y,(int(ln), int(rn)), mode='constant', constant_values=0)
+    
+    T = np.fft.rfft(yp,2*len(yp))
+    F = np.fft.rfftfreq(2*(dn + len(y)),d=2*np.pi/len(y))
+    
+    return F, T, inds
+
+
+def ifft_modes(F, T, inds, nS, nF):
+
+    dn = nextpow2(nF*nS)-nS
+    ln = np.floor(dn/2)
+
+    I = np.arange(len(F))
+    I[inds] = 0
+    I = I[I!=0]
+    
+    iT = T.copy()
+    
+    np.put(iT,I,0)
+
+    iy = np.fft.irfft(iT,2*nS*nF)
+    iy = iy[:nF*nS]
+    iy = iy[int(ln):int(ln)+nS]
+    
+    return iy, iT
+
+
+def get_radon_modes(radon, nF=512, nM=128):
+    """
+    Function to decompose a series of radon variance data sets V(r) into
+    cosine modes.
+
+    Parameters
+    ----------
+    radon : dict
+        dict of radon data
+    nM : int, optional
+        number of modes; the default is 128
+    nF : int, optional
+        controls zero-padding (smoothes out the fft); the default is 512
+
+    Returns
+    -------
+    locs : numpy array
+        mode numbers
+    fourier : numpy array
+        mode power
+    frequencies : numpy array
+        mode frequecies
+
+    """
+    
+    frames = list(radon.keys())
+    frames = sorted(frames)
+    
+    
+    nR = len(radon[frames[0]])
+    n = len(frames)
+    
+    theta = np.linspace(0,2*np.pi,2*nR)
+
+    fourier = {}
+
+    for i, frame in tqdm(enumerate(frames), total=n):
+        
+        rho = np.concatenate([radon[frame], radon[frame]])
+
+        rho -= rho.mean()
+        rho /= np.abs(rho).std()
+        
+        F, T, inds = get_modes(theta, rho, nM, nF)
+        
+        P = np.abs(T[inds])
+        
+        fourier[frame] = P
+        
+    frequencies = F[inds]
+                    
+    return inds/nF, fourier, frequencies
+
+
+def embed_radon(modes, fourier, n):
+
+    PipelineP = make_pipeline(PCA(n_components=n))
+    
+    data = {}
+    for i, m in enumerate(modes):
+        data[m] = []
+        for frame in fourier:
+            data[m].append(fourier[frame][i])
+            
+    data = pd.DataFrame(data)
+    pos = PipelineP.fit_transform(data)
+
+    return pos
+
+
+def radon_cluster_modes(modes, fourier, n=4):
+    """
+    Function to perform k-means clustering of cosine modes.
+
+    Parameters
+    ----------
+    modes : numpy array
+        mode numbers
+    fourier : numpy array
+        mode powers
+    n : int, optional
+        number of clusters; the default is 6
+
+    Returns
+    -------
+    C : numpy array
+        cluster assignment
+
+    """
+    
+    PipelineC = make_pipeline(KMeans(n_clusters=n))
+    
+    data = {}
+    for i, m in enumerate(modes):
+        data[m] = []
+        for frame in fourier:
+            data[m].append(fourier[frame][i])
+            
+    data = pd.DataFrame(data)
+    
+    C = PipelineC.fit_predict(data)
+    
+    return C
+
+
+def radon_fit_ellipses(radon):
+    """
+    Function to fit radon variance data sets with ellipses in polar coordinates.
+
+    Parameters
+    ----------
+    radon : dict
+        dict of radon data
+
+    Returns
+    -------
+    a : numpy array
+        first axis
+    b : numpy array
+        second axis
+    theta0 : numpy array
+        orientation of first axis, [0, pi] due to symmetry
+    R2 : numpy array
+        coefficient of determination
+
+    """
+    
+    frames = list(radon.keys())
+    frames = sorted(frames)  
+    
+    nR = len(radon[frames[0]])
+    n = len(frames)    
+
+    theta = np.linspace(0,2*np.pi,2*nR)
+    
+    a, b, theta0, R2 = np.zeros(n), np.zeros(n), np.zeros(n), np.zeros(n)
+    
+    for i, frame in tqdm(enumerate(frames), total=n):
+        
+        rho = np.concatenate([radon[frame], radon[frame]])
+        a[i], b[i], theta0[i], R2[i] = fit_ellipse_polar_centered(theta, rho)
+        
+        rho -= rho.mean()
+        rho /= np.abs(rho).std()       
+        
+    theta0[theta0 < 0] = theta0[theta0 < 0] + np.pi
+    theta0[theta0 > np.pi] = theta0[theta0 > np.pi] - np.pi
+    
+    return a, b, theta0, R2
+
+
+def fit_ellipse_polar_centered(Theta, Rho):
+    """
+    Function to fit an allipse to data in polar coordinates.
+
+    Parameters
+    ----------
+    Theta : numpy array
+        angle
+    Rho : numpy array
+        radius
+
+    Returns
+    -------
+    a : float
+        first axis length
+    b : float
+        second axis length
+    dT : float
+        orientation of the first axis
+    R2 : float
+        coefficient of determination
+
+    """
+
+    def fit_fun(p):
+        a, b, dT = p
+        Rhoc = a*b/np.sqrt(b**2*np.cos(Theta - dT)**2+a**2*np.sin(Theta - dT)**2)
+        return np.sum((Rhoc-Rho)**2)/np.sum((Rho-np.mean(Rho))**2)
+    
+    p = [np.max(Rho), np.min(Rho), Theta[np.argmax(Rho)]]
+    
+    fit_obj = optimize.minimize(fit_fun,p,method='TNC',bounds=[(0, None),(0, None),(0,2*np.pi)])
+    
+    R2 = 1-fit_obj.fun
+    a, b, dT = fit_obj.x
+    
+    if b > a:
+        a, b = b, a
+        dT = dT - np.pi/2
+    
+    return a, b, dT, R2
+
+
+def ellipse_coords_polar_centered(Theta,a,b):
+    """
+    Function to compute ellipse radial coordinates in polar coordinates.
+
+    Parameters
+    ----------
+    Theta : numpy array
+        angle
+    a : float
+        first axis length
+    b : float
+        second axis length
+
+    Returns
+    -------
+    Rho : numpy array
+        radius
+
+    """
+    
+    Rho = a*b/np.sqrt(b**2*np.cos(Theta)**2+a**2*np.sin(Theta)**2)
+    return Rho
+        
+
+def sort_clusters_by_ratio(a, b, C):
+    """
+    Function to reassign clusters based on sorting by ellipse aspect ratio (a-b)/a.
+
+    Parameters
+    ----------
+    a : numpy array
+        first axis lengths
+    b : numpy array
+        second axis lengths
+    C : numpy array
+        cluster assignments
+
+    Returns
+    -------
+    E : numpy array
+        ellipse aspect ratio
+    C : numpy array
+        sorted cluster assignment
+
+    """
+    
+    L = np.unique(C)
+    
+    E = np.zeros(len(a))
+    for i, (ai, bi) in enumerate(zip(a, b)):
+        E[i] = (max([ai, bi])-min([ai, bi]))/max([ai, bi])
+
+    EC = [np.mean(E[C==c]) for c in L]
+    CN = np.zeros(len(C))
+    
+    for l in L:
+        I = C == L[np.argmax(EC)]
+        EC[np.argmax(EC)] = -1
+        CN[I] = l
+    C = CN
+    
+    return E, C
+
+
+if __name__ == '__main__':
+    
+    Path = './radon_samples'
+    
+    radon = get_radon(Path)
+    a, b, theta0, R2 = radon_fit_ellipses(radon)
+    modes, fourier = get_radon_modes(radon)
+    cluster = radon_cluster_modes(modes, fourier, 4)
+    pos = embed_radon(modes, fourier, 2)
+    ratio, cluster = sort_clusters_by_ratio(a, b, cluster)
+    
+    
