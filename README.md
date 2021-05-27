@@ -15,7 +15,7 @@ differentiation impossible, and ii. because the rotation would change direction 
 intervals, making it difficult to define regions for fitting. An example of unlabeled experimental
 data is shown below:
 
-![](https://github.com/adrianfessel/RotationAnalysis/blob/main/experimental.png?raw=true)
+![](https://github.com/adrianfessel/RotationAnalysis/blob/main/experimental_unlabeled.png?raw=true)
 
 While other approaches such as simulated annealing with a polygon appear feasible,
 experimentation with a neural network for semantic segmantation turned out expedient.
