@@ -132,7 +132,7 @@ def find_sections(X, Y, L):
 
     m = np.abs(dY/dX)
     m[np.isinf(m)] = np.pi
-    mT = threshold_otsu(m) * 0.9
+    mT = threshold_otsu(m)
     
     sep = np.unique([0] + [len(X)-1] + list(np.where(m>mT)[0]) + list(np.where(dL != 0)[0]))
     

@@ -193,6 +193,8 @@ def gen_training_data(N, m0, dm, s0, ds, R, O):
     
     y, x, r = [0], [0], [0]
 
+    m0 = m0() if callable(m0) else m0
+
     while len(x) < N:
 
         m = m0*np.random.choice([-1, 1]) + dm*m0*np.random.normal(0, 0.5)
@@ -265,6 +267,7 @@ def data_gen(training_data_params, batch_size):
         
         yield (np.float16(np.asarray(Y)), np.float16(np.asarray(R)))
         
+        
 def train(training_data_params, batch_size, epochs, steps_per_epoch):
     """
     Function for training. Validation accuracy is limited, as random noise
@@ -298,6 +301,24 @@ def train(training_data_params, batch_size, epochs, steps_per_epoch):
     
     return model
 
+
+def slope():
+    """
+    Function to randomize center slope from the interval [m0/2, m0*2].
+    Can be passed to the training data generation function to generate
+    a different center slope for each data set.
+
+    Returns
+    -------
+    m0 : float
+        obtained from the interval [m0/2, m0*2] with uniform probability
+
+    """
+    
+    m0 = 2*np.pi/3600*12
+    return 2 * m0 * np.random.rand()
+
+
 if __name__ == '__main__':
         
     import os
@@ -307,10 +328,10 @@ if __name__ == '__main__':
     size = 4096
     batch_size = 4
     epochs = 50
-    steps_per_epoch = 200
+    steps_per_epoch = 250
 
     N = size
-    m0 = 2*np.pi/3600*12
+    m0 = slope#2*np.pi/3600*12
     dm = 0.75
     s0 = np.pi/2
     ds = 0.75

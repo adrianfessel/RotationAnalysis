@@ -12,9 +12,10 @@ series of an evolving angle, recovering as much information as possible, the bar
 being the speed of rotation.
 However, simple approaches failed, as i. the data was extremely noisy, making numeric
 differentiation impossible, and ii. because the rotation would change direction after random 
-intervals, making it difficult to define regions for fitting.
+intervals, making it difficult to define regions for fitting. An example of unlabeled experimental
+data is shown below:
 
---- Picture of experimental data coming soon ---
+![](https://github.com/adrianfessel/RotationAnalysis/blob/main/experimental.png?raw=true)
 
 While other approaches such as simulated annealing with a polygon appear feasible,
 experimentation with a neural network for semantic segmantation turned out expedient.
@@ -70,3 +71,8 @@ noise (RANSAC regression), it is possible to fit the sections with acceptable qu
 The slope (rotation speed) recovered by the method matches the slope used for generation of the example.
 
 ![](https://github.com/adrianfessel/RotationAnalysis/blob/main/text.PNG?raw=true)
+
+The trained network can be used to label the experimental data in the topmost figure. After partitioning
+into sections, the same fitting routine as above can be applied:
+
+![](https://github.com/adrianfessel/RotationAnalysis/blob/main/experimental_labeled_fits.png?raw=true)

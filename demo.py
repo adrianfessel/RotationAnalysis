@@ -12,17 +12,19 @@ import matplotlib.pyplot as plt
 
 from tensorflow.keras.models import load_model
 
-from analysis import evaluate_window, find_sections
-from training import gen_training_data
+from analysis import evaluate_window, find_sections, get_radon, radon_fit_ellipses
+from training import gen_training_data, slope
+
+### synthetic data example
 
 # parameters for synthetic data
 N = 4096
-m0 = 2*np.pi/3600*12
+m0 = slope()
 dm = 0.75
 s0 = np.pi/2
 ds = 0.75
 R = 0.1
-O = 0.2
+O = 0.33
 
 # generate synthetic data
 training_data_params = {'N':N, 'm0':m0, 'dm':dm, 's0':s0, 'ds':ds, 'R':R, 'O':O}
@@ -87,6 +89,49 @@ plt.xticks(fontsize=14)
 plt.yticks(fontsize=14)
 plt.tight_layout()
 
+
+### real data example
+
+Path = './radon_samples'
+
+radon = get_radon(Path)
+_, _, Y, _ = radon_fit_ellipses(radon)
+
+X = np.arange(len(Y))
+
+L = evaluate_window(model, Y, 4096)
+sections = find_sections(X, Y, L)
+
+plt.figure(figsize=plt.figaspect(.75/(2*1.618)))
+plt.scatter(X[L==0], Y[L==0], s=1, c='gray', alpha = 0.5)
+plt.scatter(X[L==1], Y[L==1], s=1, c='r')
+plt.scatter(X[L==2], Y[L==2], s=1, c='b')
+plt.xlabel('time (s)', fontsize=16)
+plt.ylabel('angle (rad)', fontsize=16)
+plt.title('synthetic data (labels recovered)', fontsize=16)
+plt.xticks(fontsize=14)
+plt.yticks(fontsize=14)
+plt.tight_layout()
+
+plt.figure(figsize=plt.figaspect(.75/(2*1.618)))
+plt.scatter(X[L==0], Y[L==0], s=1, c='gray', alpha = 0.5)
+plt.scatter(X[L==1], Y[L==1], s=1, c='r')
+plt.scatter(X[L==2], Y[L==2], s=1, c='b')
+
+for i, section in sections.items():
+    plt.plot(section['xf'], section['yf'], 'k--')
+
+plt.xlabel('time (s)', fontsize=16)
+plt.ylabel('angle (rad)', fontsize=16)
+plt.title('synthetic data (with fits)', fontsize=16)
+plt.xticks(fontsize=14)
+plt.yticks(fontsize=14)
+plt.tight_layout()
+
+m = np.abs([sections[ind]['m'] for ind in sections]) * 3600 / 12 * 180 / np.pi
+slen = np.asarray([sections[ind]['nI'] for ind in sections])
+
+np.sum(m*slen)/np.sum(slen)
 
 # Path = 'E:/Seadrive/Adrian F/Meine Bibliotheken/Phasenwellen-Projekt/codes_unsorted/rotation_analysis/SlopeData'
 # DataSets = [Set for Set in os.listdir(Path) if '.pkl' in Set]
